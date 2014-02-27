@@ -16,6 +16,8 @@
 
 module Data.FileStore.Git
            ( gitFileStore
+           , GitFileStore(..)
+           , gitFileStoreFull
            )
 where
 import Data.FileStore.Types
@@ -26,7 +28,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.FileStore.Utils (withSanityCheck, hashsMatch, runShellCommand, escapeRegexSpecialChars, withVerifyDir, encodeArg)
 import Data.ByteString.Lazy.UTF8 (toString)
 import qualified Data.ByteString.Lazy.Char8 as B
-import Control.Monad (when)
+import Control.Monad (when, void)
 import System.FilePath ((</>), splitFileName)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, executable, getPermissions, setPermissions)
 import Control.Exception (throwIO)
@@ -49,6 +51,17 @@ gitFileStore repo = FileStore {
   , directory         = gitDirectory repo
   , search            = gitSearch repo 
   , idsMatch          = const hashsMatch repo
+  }
+
+data GitFileStore = GitFileStore {
+    base :: FileStore
+  , configAuthor :: Author -> IO ()
+  }
+
+gitFileStoreFull :: FilePath -> GitFileStore
+gitFileStoreFull repo = GitFileStore {
+    base = gitFileStore repo
+  , configAuthor = gitConfigAuthor repo
   }
 
 -- | Run a git command and return error status, error output, standard output.  The repository
@@ -336,3 +349,7 @@ parseChanges [_] =
   throwIO $ UnknownError $ "parseChanges encountered odd number of fields"
 parseChanges [] = return []
 
+gitConfigAuthor :: FilePath -> Author -> IO ()
+gitConfigAuthor repo author = withVerifyDir repo $ do
+  void $ runGitCommand repo "config" ["user.email", authorEmail author]
+  void $ runGitCommand repo "config" ["user.name", authorName author]
