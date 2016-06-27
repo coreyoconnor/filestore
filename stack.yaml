@@ -1,0 +1,7 @@
+flags:
+  filestore:
+      maxcount: true
+packages:
+- '.'
+extra-deps: []
+resolver: lts-6.1
