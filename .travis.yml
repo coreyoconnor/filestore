@@ -28,39 +28,36 @@ matrix:
   include:
   # We grab the appropriate GHC and cabal-install versions from hvr's PPA. See:
   # https://github.com/hvr/multi-ghc-travis
-  - env: BUILD=cabal GHCVER=7.4.2 CABALVER=1.16
-    compiler: ": #GHC 7.4.2"
-    addons: {apt: {packages: [cabal-install-1.16,ghc-7.4.2], sources: [hvr-ghc]}}
   - env: BUILD=cabal GHCVER=7.6.3 CABALVER=1.16
     compiler: ": #GHC 7.6.3"
-    addons: {apt: {packages: [cabal-install-1.16,ghc-7.6.3], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,cabal-install-1.16,ghc-7.6.3], sources: [hvr-ghc]}}
   - env: BUILD=cabal GHCVER=7.8.4 CABALVER=1.18
     compiler: ": #GHC 7.8.4"
-    addons: {apt: {packages: [cabal-install-1.18,ghc-7.8.4], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,cabal-install-1.18,ghc-7.8.4], sources: [hvr-ghc]}}
   - env: BUILD=cabal GHCVER=7.10.3 CABALVER=1.22
     compiler: ": #GHC 7.10.3"
-    addons: {apt: {packages: [cabal-install-1.22,ghc-7.10.3], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,cabal-install-1.22,ghc-7.10.3], sources: [hvr-ghc]}}
 
   - env: BUILD=cabal GHCVER=8.0.1 CABALVER=1.24
     compiler: ": #GHC 8.0.1"
-    addons: {apt: {packages: [cabal-install-1.24,ghc-8.0.1], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,cabal-install-1.24,ghc-8.0.1], sources: [hvr-ghc]}}
 
   # Build with the newest GHC and cabal-install. This is an accepted failure,
   # see below.
   - env: BUILD=cabal GHCVER=head  CABALVER=head
     compiler: ": #GHC HEAD"
-    addons: {apt: {packages: [cabal-install-head,ghc-head], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,cabal-install-head,ghc-head], sources: [hvr-ghc]}}
 
   # The Stack builds. We can pass in arbitrary Stack arguments via the ARGS
   # variable, such as using --stack-yaml to point to a different file.
   - env: BUILD=stack ARGS="--resolver lts-5"
     compiler: ": #stack 7.10.3"
-    addons: {apt: {packages: [ghc-7.10.3], sources: [hvr-ghc]}}
+    addons: {apt: {packages: [darcs,ghc-7.10.3], sources: [hvr-ghc]}}
 
   # Nightly builds are allowed to fail
   - env: BUILD=stack ARGS="--resolver nightly"
     compiler: ": #stack nightly"
-    addons: {apt: {packages: [libgmp-dev]}}
+    addons: {apt: {packages: [darcs,libgmp-dev]}}
 
   - env: BUILD=stack ARGS="--resolver lts-5"
     compiler: ": #stack 7.10.3 osx"
@@ -112,16 +109,15 @@ script:
 - |
   case "$BUILD" in
     stack)
-    stack --no-terminal $ARGS test --haddock --no-haddock-deps --ghc-options="-Wall -fno-warn-unused-do-bind -Werror"
+    stack --no-terminal $ARGS test --haddock --no-haddock-deps --ghc-options="-Wall -fno-warn-unused-do-bind"
       ;;
     cabal)
-      cabal configure --enable-tests --enable-benchmarks -v2 --ghc-options="-O0 -Werror"
-      cabal build
-      cabal check || [ "$CABALVER" == "1.16" ]
-      cabal test
-      cabal copy
-      # cabal sdist fails on cabal 1.16:
-      cabal sdist || [ "$CABALVER" == "1.16" ]
+      cabal configure --enable-tests --enable-benchmarks -v2 --ghc-options="-O0" && \
+      cabal build && \
+      cabal check && \
+      cabal test && \
+      cabal copy && \
+      cabal sdist && \
       SRC_TGZ=$(cabal info . | awk '{print $2;exit}').tar.gz && \
         (cd dist && cabal install --enable-tests --force-reinstalls "$SRC_TGZ" || \
             [ "$CABALVER" == "1.16" ])

@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DoAndIfThenElse #-}
 
 {- |
    Module      : Data.FileStore.Git
@@ -40,7 +41,7 @@ import qualified Control.Exception as E
 gitFileStore :: FilePath -> FileStore
 gitFileStore repo = FileStore {
     initialize        = gitInit repo
-  , save              = gitSave repo 
+  , save              = gitSave repo
   , retrieve          = gitRetrieve repo
   , delete            = gitDelete repo
   , rename            = gitMove repo
@@ -49,7 +50,7 @@ gitFileStore repo = FileStore {
   , revision          = gitGetRevision repo
   , index             = gitIndex repo
   , directory         = gitDirectory repo
-  , search            = gitSearch repo 
+  , search            = gitSearch repo
   , idsMatch          = const hashsMatch repo
   }
 
@@ -101,7 +102,7 @@ gitInit repo = do
        if status' == ExitSuccess
           then return ()
           else throwIO $ UnknownError $ "git config failed:\n" ++ err'
-     else throwIO $ UnknownError $ "git-init failed:\n" ++ err 
+     else throwIO $ UnknownError $ "git-init failed:\n" ++ err
 
 -- | Commit changes to a resource.  Raise 'Unchanged' exception if there were
 -- no changes.
@@ -185,7 +186,7 @@ gitDelete repo name author logMsg = withSanityCheck repo [".git"] name $ do
 gitMove :: FilePath -> FilePath -> FilePath -> Author -> Description -> IO ()
 gitMove repo oldName newName author logMsg = do
   _ <- gitLatestRevId repo oldName   -- will throw a NotFound error if oldName doesn't exist
-  (statusAdd, err, _) <- withSanityCheck repo [".git"] newName $ runGitCommand repo "mv" [oldName, newName] 
+  (statusAdd, err, _) <- withSanityCheck repo [".git"] newName $ runGitCommand repo "mv" [oldName, newName]
   if statusAdd == ExitSuccess
      then gitCommit repo [oldName, newName] author logMsg
      else throwIO $ UnknownError $ "Could not git mv " ++ oldName ++ " " ++ newName ++ "\n" ++ err
@@ -210,7 +211,7 @@ gitGetRevision :: FilePath -> RevisionId -> IO Revision
 gitGetRevision repo revid = do
   (status, _, output) <- runGitCommand repo "whatchanged" ["-z","--pretty=format:" ++ gitLogFormat, "--max-count=1", revid]
   if status == ExitSuccess
-     then parseLogEntry $ B.drop 1 output  -- drop initial \1
+     then parseLogEntry $ B.drop 1 output -- drop initial \1
      else throwIO NotFound
 
 -- | Get a list of all known files inside and managed by a repository.
@@ -260,7 +261,7 @@ parseMatchLine str =
                                     else error $ "parseMatchLine: " ++ str
              , matchLine = cont}
     where (fname,xs) = break (== '\NUL') str
-          rest = drop 1 xs 
+          rest = drop 1 xs
           -- for some reason, NUL is used after line number instead of
           -- : when --match-all is passed to git-grep.
           (ln,ys) = span (`elem` ['0'..'9']) rest
@@ -332,24 +333,54 @@ parseLogEntry entry = do
 stripTrailingNewlines :: B.ByteString -> B.ByteString
 stripTrailingNewlines = B.reverse . B.dropWhile (=='\n') . B.reverse
 
+-- | This function converts the git "log" %B (raw body) format into a
+-- list of Change items (e.g. `Added FilePath`, `Modified FilePath`,
+-- or `Deleted FilePath`).  The raw body format is normally pairs of
+-- ByteStrings, like:
+--
+--    ":000000 100644 0000000... 9cf8bba... A", "path/to/file.foo"
+--
+-- where the last letter of the first element is the type of change.
+-- Git can track renames however, and those are noted by a triple of
+-- ByteStrings; for example:
+--
+--   ":100644 100644 6c2c6e2... d333ad0... R063",
+--   "old/file/path/name.foo",
+--   "new/file/path/newname.bar"
+--
+-- Since filestore does not track renames, these are converted to
+-- a remove of the first file and an add of the second.
+--
+-- n.b. without reading git sources, it's not clear what the raw body
+-- format details are; specifically, the three digits following the R
+-- are ignored.
 parseChanges :: [B.ByteString] -> IO [Change]
 parseChanges (x:y:zs) = do
-  when (B.null x) $
-     throwIO $ UnknownError "parseChanges found empty change description"
-  let changeType = B.last x
+  when (B.null x) $ pcErr "found empty change description"
+  let changeType = B.head $ last $ B.words x
   let file' = toString y
-  let next = case changeType of
-           'A'  -> Added file'
-           'M'  -> Modified file'
-           'D'  -> Deleted file'
-           _    -> Modified file'
-  rest <- parseChanges zs
-  return (next:rest)
+  if changeType == 'R'
+  then parseChanges (tail zs) >>=
+       return . (++) (Deleted file' : Added (toString $ head zs) : [])
+  else
+      do next <- case changeType of
+                   'A'  -> return $ Added file'
+                   'M'  -> return $ Modified file'
+                   'D'  -> return $ Deleted file'
+                   _    -> pcErr ("found unknown changeType '" ++
+                                  (show changeType) ++
+                                  "' in: " ++ (show x) ++
+                                  " on " ++ (show y))
+         rest <- parseChanges zs
+         return (next:rest)
 parseChanges [_] =
-  throwIO $ UnknownError $ "parseChanges encountered odd number of fields"
+  pcErr "encountered odd number of fields"
 parseChanges [] = return []
 
 gitConfigAuthor :: FilePath -> Author -> IO ()
 gitConfigAuthor repo author = withVerifyDir repo $ do
   void $ runGitCommand repo "config" ["user.email", authorEmail author]
   void $ runGitCommand repo "config" ["user.name", authorName author]
+
+pcErr :: forall a. String -> IO a
+pcErr = throwIO . UnknownError . (++) "filestore parseChanges "
